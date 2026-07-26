@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentLens &mdash; blast radius</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground:   #EDF0F4;
+  --panel:    #FFFFFF;
+  --ink:      #16202E;
+  --ink-soft: #5A6878;
+  --rule:     #D3DAE3;
+  --alert:    #C2701C;
+  --alert-bg: #FBF0E2;
+  --calm:     #2F7A6F;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 15px; line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 48px 32px 80px; }
+
+.eyebrow {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-soft); margin: 0 0 10px;
+}
+h1 {
+  font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+  font-size: 38px; font-weight: 600; letter-spacing: -.02em;
+  margin: 0 0 28px; line-height: 1.1;
+}
+
+.change {
+  background: var(--panel); border: 1px solid var(--rule);
+  border-left: 3px solid var(--alert);
+  padding: 18px 22px; margin-bottom: 34px;
+}
+.change dt {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-soft); margin-bottom: 3px;
+}
+.change dd { margin: 0 0 14px; }
+.change dd:last-child { margin-bottom: 0; }
+.urn {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px; word-break: break-all; color: var(--ink);
+}
+
+.verdict {
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 26px 0 22px; border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule); margin-bottom: 40px;
+}
+.verdict .n {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 68px; font-weight: 600; line-height: 1;
+  letter-spacing: -.03em; color: var(--alert);
+}
+.verdict.safe .n { color: var(--calm); }
+.verdict .label { font-size: 17px; color: var(--ink-soft); }
+.verdict .label strong { color: var(--ink); font-weight: 600; }
+
+h2 {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-soft); font-weight: 500;
+  margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+}
+
+.cascade { display: flex; gap: 0; align-items: stretch; margin-bottom: 44px; overflow-x: auto; }
+.hop { min-width: 210px; flex: 1; padding: 0 18px; border-left: 1px solid var(--rule); }
+.hop:first-child { padding-left: 0; border-left: none; }
+.hop-n {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-soft); margin-bottom: 12px;
+}
+.node {
+  background: var(--panel); border: 1px solid var(--rule);
+  padding: 11px 13px; margin-bottom: 8px;
+}
+.node.root { border-color: var(--ink); border-width: 1.5px; }
+.node.agent { background: var(--alert-bg); border-color: #E5C89C; }
+.node .nm { font-weight: 600; font-size: 14px; word-break: break-word; }
+.node .kd {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-soft); margin-top: 2px;
+}
+
+table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
+th {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-soft); font-weight: 500;
+  text-align: left; padding: 0 14px 9px 0; border-bottom: 1px solid var(--rule);
+}
+td { padding: 12px 14px 12px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+td.name { font-weight: 600; }
+td.path {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px; color: var(--ink-soft); word-break: break-all;
+}
+.pill {
+  display: inline-block; padding: 2px 8px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  background: var(--ground); border: 1px solid var(--rule);
+}
+
+.wrote { background: var(--panel); border: 1px solid var(--rule); padding: 4px 20px; }
+.wrote li {
+  list-style: none; padding: 11px 0; border-bottom: 1px solid var(--rule);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12.5px;
+}
+.wrote li:last-child { border-bottom: none; }
+.wrote ul { margin: 0; padding: 0; }
+
+footer {
+  margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--rule);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px; color: var(--ink-soft); display: flex;
+  justify-content: space-between; flex-wrap: wrap; gap: 10px;
+}
+.empty { color: var(--ink-soft); font-style: italic; padding: 8px 0 28px; }
+
+@media (max-width: 720px) {
+  .wrap { padding: 32px 20px 60px; }
+  h1 { font-size: 28px; }
+  .verdict .n { font-size: 52px; }
+  .cascade { flex-direction: column; }
+  .hop { border-left: none; border-top: 1px solid var(--rule); padding: 16px 0 0; }
+  .hop:first-child { border-top: none; padding-top: 0; }
+}
+</style>
+</head><body><div class="wrap">
+
+<p class="eyebrow">AgentLens &mdash; agent blast radius</p>
+<h1>Which agents break<br>if this changes?</h1>
+
+<dl class="change">
+  <dt>Proposed change</dt>
+  <dd>dropping column discount_pct</dd>
+  <dt>Asset</dt>
+  <dd class="urn">urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_details,PROD)</dd>
+</dl>
+
+<div class="verdict">
+  <div class="n">3</div>
+  <div class="label"><strong>3 agents</strong> lose context if this change ships. 4 skills affected.</div>
+</div>
+
+<h2>Propagation</h2>
+<div class="cascade"><div class="hop"><div class="hop-n">source</div><div class="node root"><div class="nm">b2fd91.order_entry_db.analytics.order_details</div><div class="kd">changed asset</div></div></div><div class="hop"><div class="hop-n">1 hop</div><div class="node"><div class="nm">churn-risk</div><div class="kd">skill</div></div><div class="node"><div class="nm">margin-analysis</div><div class="kd">skill</div></div><div class="node"><div class="nm">ownership-audit</div><div class="kd">skill</div></div><div class="node"><div class="nm">revenue-lookup</div><div class="kd">skill</div></div></div><div class="hop"><div class="hop-n">2 hops</div><div class="node agent"><div class="nm">growth-analyst</div><div class="kd">agent</div></div><div class="node agent"><div class="nm">finance-copilot</div><div class="kd">agent</div></div><div class="node agent"><div class="nm">catalog-steward</div><div class="kd">agent</div></div></div></div>
+
+<h2>Agents</h2><table><thead><tr><th>Name</th><th>Distance</th><th>Owner</th><th>Source</th></tr></thead><tbody><tr><td class="name">catalog-steward</td><td><span class="pill">2 hops</span></td><td>data-platform</td><td class="path">github.com/acme/data-agents/agentlens.yaml</td></tr><tr><td class="name">finance-copilot</td><td><span class="pill">2 hops</span></td><td>fpa-platform</td><td class="path">github.com/acme/data-agents/agentlens.yaml</td></tr><tr><td class="name">growth-analyst</td><td><span class="pill">2 hops</span></td><td>growth-eng</td><td class="path">github.com/acme/data-agents/agentlens.yaml</td></tr></tbody></table>
+<h2>Skills</h2><table><thead><tr><th>Name</th><th>Distance</th><th>Owner</th><th>Source</th></tr></thead><tbody><tr><td class="name">churn-risk</td><td><span class="pill">1 hop</span></td><td>&mdash;</td><td class="path">github.com/acme/data-agents/skills/churn-risk/SKILL.md</td></tr><tr><td class="name">margin-analysis</td><td><span class="pill">1 hop</span></td><td>&mdash;</td><td class="path">github.com/acme/data-agents/skills/margin-analysis/SKILL.md</td></tr><tr><td class="name">ownership-audit</td><td><span class="pill">1 hop</span></td><td>&mdash;</td><td class="path">github.com/acme/data-agents/skills/ownership-audit/SKILL.md</td></tr><tr><td class="name">revenue-lookup</td><td><span class="pill">1 hop</span></td><td>&mdash;</td><td class="path">github.com/acme/data-agents/skills/revenue-lookup/SKILL.md</td></tr></tbody></table>
+<h2>Tools</h2><p class='empty'>None.</p>
+
+<h2>Written back to DataHub</h2><div class='wrote'><ul><li>tagged upstream `has-agent-consumers`  (growth-analyst, finance-copilot, catalog-steward)</li><li>tagged 7 downstream asset(s) `agent-context-review`</li></ul></div>
+
+<footer>
+  <span>Generated 26 Jul 2026 23:51 UTC</span>
+  <span>38 total downstream assets traversed</span>
+</footer>
+
+</div></body></html>

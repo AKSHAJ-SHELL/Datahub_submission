@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "datahub": {
+      "command": "uvx",
+      "args": ["mcp-server-datahub@latest"],
+      "tools": ["search", "get_lineage", "get_entities", "get_dataset_queries"]
+    },
+    "warehouse": {
+      "command": "python",
+      "args": ["-m", "warehouse_mcp"],
+      "tools": ["run_query", "describe_table"]
+    }
+  }
+}

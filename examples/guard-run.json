@@ -1,0 +1,86 @@
+{
+  "report": {
+    "root": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_details,PROD)",
+    "agents": [
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:agentlens,agent.growth-analyst,PROD)",
+        "name": "growth-analyst",
+        "kind": "agent",
+        "subtype": "AI Agent",
+        "repository": "github.com/acme/data-agents",
+        "source_path": "agentlens.yaml",
+        "owner_team": "growth-eng",
+        "hops": 2
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:agentlens,agent.finance-copilot,PROD)",
+        "name": "finance-copilot",
+        "kind": "agent",
+        "subtype": "AI Agent",
+        "repository": "github.com/acme/data-agents",
+        "source_path": "agentlens.yaml",
+        "owner_team": "fpa-platform",
+        "hops": 2
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:agentlens,agent.catalog-steward,PROD)",
+        "name": "catalog-steward",
+        "kind": "agent",
+        "subtype": "AI Agent",
+        "repository": "github.com/acme/data-agents",
+        "source_path": "agentlens.yaml",
+        "owner_team": "data-platform",
+        "hops": 2
+      }
+    ],
+    "skills": [
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:agentlens,skill.churn-risk,PROD)",
+        "name": "churn-risk",
+        "kind": "skill",
+        "subtype": "Agent Skill",
+        "repository": "github.com/acme/data-agents",
+        "source_path": "skills/churn-risk/SKILL.md",
+        "owner_team": "",
+        "hops": 1
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:agentlens,skill.margin-analysis,PROD)",
+        "name": "margin-analysis",
+        "kind": "skill",
+        "subtype": "Agent Skill",
+        "repository": "github.com/acme/data-agents",
+        "source_path": "skills/margin-analysis/SKILL.md",
+        "owner_team": "",
+        "hops": 1
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:agentlens,skill.ownership-audit,PROD)",
+        "name": "ownership-audit",
+        "kind": "skill",
+        "subtype": "Agent Skill",
+        "repository": "github.com/acme/data-agents",
+        "source_path": "skills/ownership-audit/SKILL.md",
+        "owner_team": "",
+        "hops": 1
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:agentlens,skill.revenue-lookup,PROD)",
+        "name": "revenue-lookup",
+        "kind": "skill",
+        "subtype": "Agent Skill",
+        "repository": "github.com/acme/data-agents",
+        "source_path": "skills/revenue-lookup/SKILL.md",
+        "owner_team": "",
+        "hops": 1
+      }
+    ],
+    "tools": [],
+    "total_downstream": 38
+  },
+  "reason": "dropping column discount_pct",
+  "actions": [
+    "  tagged upstream `has-agent-consumers`  (growth-analyst, finance-copilot, catalog-steward)",
+    "  tagged 7 downstream asset(s) `agent-context-review`"
+  ]
+}

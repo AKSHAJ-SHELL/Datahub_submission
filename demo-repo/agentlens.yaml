@@ -1,0 +1,34 @@
+agents:
+  - id: finance-copilot
+    name: finance-copilot
+    description: Answers revenue and margin questions for the FP&A team.
+    model: claude-sonnet-4-6
+    owner_team: fpa-platform
+    skills:
+      - revenue-lookup
+      - margin-analysis
+    tools:
+      - run_query
+
+  - id: growth-analyst
+    name: growth-analyst
+    description: Self-serve funnel and retention analysis for the growth org.
+    model: claude-sonnet-4-6
+    owner_team: growth-eng
+    skills:
+      - funnel-report
+      - churn-risk
+    tools:
+      - run_query
+      - search
+
+  - id: catalog-steward
+    name: catalog-steward
+    description: Keeps ownership and descriptions current across the warehouse.
+    model: claude-haiku-4-5
+    owner_team: data-platform
+    skills:
+      - ownership-audit
+    tools:
+      - search
+      - get_lineage

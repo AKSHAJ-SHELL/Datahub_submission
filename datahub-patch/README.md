@@ -9,10 +9,28 @@ git checkout -b agentlens-demo ee7a980
 git am /path/to/agentlens-project/datahub-patch/*.patch
 ```
 
-| Patch | What it is |
-|---|---|
-| `0001-fix-web-react-...` | **Unrelated upstream bug.** `useSetAppTheme.tsx` imports `./conf/theme/...` but the themes live at `src/conf/theme/`, so the path needs `../`. esbuild cannot resolve the glob and `vite` refuses to boot. One character. Included only because you cannot run the dev server without it — it should be its own PR. |
-| `0002-feat-web-react-...` | The Agents tab. 4 new files under `entityV2/dataset/profile/AgentImpact/`, the tab entry in `DatasetEntity.tsx`, and a `/agentlens` proxy entry in `vite.config.ts`. |
+| Patch | What it is | Files it as |
+|---|---|---|
+| `0001-fix-ui-...` | **Unrelated upstream bug.** `useSetAppTheme.tsx` imports `./conf/theme/...` but the themes live at `src/conf/theme/`, so the path needs `../`. esbuild cannot resolve the glob and `vite` refuses to boot. One character. Included only because you cannot run the dev server without it. | `PR-1-theme-fix.md` |
+| `0002-feat-ui-...` | The Agents tab. 4 new files under `entityV2/dataset/profile/AgentImpact/`, the tab entry in `DatasetEntity.tsx`, and a `/agentlens` proxy entry in `vite.config.ts`. | `PR-2-agents-tab.md` |
+
+## These are two PRs, not one
+
+`docs/CONTRIBUTING.md`: *"PRs are squashed and merged, resulting in a single
+commit with the PR title as the commit message."* Bundling both commits into one
+PR would squash an unrelated one-character bug fix into a feature commit. File
+them separately, PR 1 first.
+
+Titles use the `ui` scope, which is what upstream actually uses for
+`datahub-web-react` changes — `fix(ui)` and `feat(ui)` dominate that directory's
+history, while `web-react` appears zero times.
+
+## File against the parent repo, not the fork
+
+`acryldata/datahub` is a **fork** of `datahub-project/datahub` (34 stars vs
+12.4k). Its open PRs are dependabot bumps and "sync OSS upstream master" — it is
+Acryl's sync fork, not where community feature PRs go. Target
+`datahub-project/datahub` `master`.
 
 No fork, no patched Docker image, no gradle changes. The tab is registered
 through the existing `getProfileTabs()` mechanism and gated through the existing

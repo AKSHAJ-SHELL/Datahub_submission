@@ -1,7 +1,7 @@
-From e7824e4a943f308828045eb142a4fec93090df0e Mon Sep 17 00:00:00 2001
+From f044e81477264c24c3d14f7e05aeb1d0d393474c Mon Sep 17 00:00:00 2001
 From: Akshaj <akshaj@Akshajs-MacBook-Pro.local>
-Date: Fri, 31 Jul 2026 17:03:56 -0700
-Subject: [PATCH 2/2] feat(web-react): add an Agents tab to the dataset profile
+Date: Fri, 31 Jul 2026 17:12:49 -0700
+Subject: [PATCH 2/2] feat(ui): add an Agents tab to the dataset profile
 
 Adds an "Agents" tab next to Lineage on the dataset profile, answering the
 question lineage raises but cannot settle: of the consumers downstream, which
@@ -14,8 +14,7 @@ its instruction text comes back unchanged - lineage alone would have flagged it.
 
 Visibility is gated on the `has-agent-consumers` tag, which rides in on
 globalTags that the dataset query already fetches, so the tab appears on exactly
-the tables an agent fleet reads and costs no extra request. Data comes from a
-local `agentlens serve` process over a same-origin /agentlens vite proxy.
+the tables an agent fleet reads and costs no extra request.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---

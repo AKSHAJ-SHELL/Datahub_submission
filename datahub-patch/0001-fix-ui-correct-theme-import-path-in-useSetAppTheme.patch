@@ -1,8 +1,7 @@
-From fb04caf8cd8c01b2980c504ee22452df64a25594 Mon Sep 17 00:00:00 2001
+From a79de83a52ad549b39a603f13cf4f923e81bb368 Mon Sep 17 00:00:00 2001
 From: Akshaj <akshaj@Akshajs-MacBook-Pro.local>
-Date: Fri, 31 Jul 2026 17:03:43 -0700
-Subject: [PATCH 1/2] fix(web-react): correct theme import path in
- useSetAppTheme
+Date: Fri, 31 Jul 2026 17:12:49 -0700
+Subject: [PATCH 1/2] fix(ui): correct theme import path in useSetAppTheme
 
 useSetAppTheme.tsx lives in src/app/ and dynamically imports
 `./conf/theme/${customThemeId}`, but the themes are at src/conf/theme/,

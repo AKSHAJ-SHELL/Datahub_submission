@@ -2,6 +2,11 @@
 
 **Lineage for your AI agents.**
 
+> **Reviewing this?** Start with **[SUBMISSION.md](SUBMISSION.md)** — what this
+> is trying to achieve, where the design is unsettled, and the open questions.
+> The DataHub-side diff is 4 files, in **[datahub-patch/](datahub-patch/)**.
+> Cold start in **[RUNBOOK.md](RUNBOOK.md)**.
+
 Your dashboards have lineage. Your agents don't.
 
 When you drop a column and a dashboard depends on it, the dashboard *errors* —

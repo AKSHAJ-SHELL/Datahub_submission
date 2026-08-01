@@ -6,7 +6,7 @@ Anything that is not needed to compute blast radius does not belong here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -14,16 +14,16 @@ from typing import Any
 class DataRef:
     """A reference to a data asset found in a skill or prompt."""
 
-    raw: str                      # the token as it appeared, e.g. "analytics.order_details"
-    source_file: str              # where we found it
-    confidence: float = 0.5       # how sure we are this is a real table
+    raw: str  # the token as it appeared, e.g. "analytics.order_details"
+    source_file: str  # where we found it
+    confidence: float = 0.5  # how sure we are this is a real table
     resolved_urn: str | None = None
 
 
 @dataclass
 class Tool:
     name: str
-    server: str                   # MCP server name
+    server: str  # MCP server name
     source_file: str
 
 
@@ -63,7 +63,7 @@ class Manifest:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Manifest":
+    def from_dict(data: dict[str, Any]) -> Manifest:
         return Manifest(
             repository=data.get("repository", ""),
             agents=[Agent(**a) for a in data.get("agents", [])],

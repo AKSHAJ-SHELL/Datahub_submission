@@ -14,15 +14,29 @@ def _report(agents=None, skills=None, tools=None):
 
 
 def _agent(name="finance-copilot", hops=2):
-    return {"urn": f"urn:li:dataset:(x,{name},PROD)", "name": name, "kind": "agent",
-            "subtype": "AI Agent", "repository": "acme/agents",
-            "source_path": "agentlens.yaml", "owner_team": "fpa", "hops": hops}
+    return {
+        "urn": f"urn:li:dataset:(x,{name},PROD)",
+        "name": name,
+        "kind": "agent",
+        "subtype": "AI Agent",
+        "repository": "acme/agents",
+        "source_path": "agentlens.yaml",
+        "owner_team": "fpa",
+        "hops": hops,
+    }
 
 
 def _skill(name="revenue-lookup", hops=1):
-    return {"urn": f"urn:li:dataset:(x,{name},PROD)", "name": name, "kind": "skill",
-            "subtype": "Agent Skill", "repository": "acme/agents",
-            "source_path": f"skills/{name}/SKILL.md", "owner_team": "", "hops": hops}
+    return {
+        "urn": f"urn:li:dataset:(x,{name},PROD)",
+        "name": name,
+        "kind": "skill",
+        "subtype": "Agent Skill",
+        "repository": "acme/agents",
+        "source_path": f"skills/{name}/SKILL.md",
+        "owner_team": "",
+        "hops": hops,
+    }
 
 
 def test_renders_valid_html():

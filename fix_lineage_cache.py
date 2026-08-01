@@ -1,4 +1,55 @@
-"""Blast radius: which agents and skills degrade if this asset changes?
+#!/usr/bin/env python3
+"""
+Fixes the lineage-cache correctness bug in AgentLens.
+
+Run from inside agentlens-project/:
+
+    python fix_lineage_cache.py
+    ruff check --fix . && ruff check . && mypy agentlens && pytest -q
+
+Background
+----------
+DataHub exposes two GraphQL lineage reads, backed by two different caches:
+
+  * `Dataset.lineage`     - `LineageInput` has no `skipCache`, and no
+                            `searchFlags` member to borrow one from. No opt-out.
+  * `searchAcrossLineage` - `SearchAcrossLineageInput.searchFlags.skipCache`
+                            exists, but that is a different cache again.
+
+Measured on GMS v1.5.0.6: after removing lineage, `searchAcrossLineage` was
+still stale past 120s, while `Dataset.lineage` was stale at t+0 and clean from
+t+30. Two caches, not one - and `impact.py` was calling the one with no opt-out.
+
+`demo.sh` runs `emit` and then `guard` back to back. That is t+0, inside the
+measured stale window. On a cold or stale cache the traversal returns nothing,
+and the old `render()` printed:
+
+    No agents downstream. Safe to change.
+
+which is a confident, wrong all-clear - the exact failure mode this project
+exists to prevent, and a direct violation of the rule in the agentlens-guard
+skill ("Never report 'safe' from a failed or empty traversal").
+
+What this changes
+-----------------
+1. `impact.py` gains a cache-free default read path. It enumerates the
+   AgentLens nodes and reads each one's `upstreamLineage` **stored aspect**
+   through the GMS aspect API, then inverts those edges locally. Stored aspects
+   are not served from either lineage cache. `--lineage-source graphql`
+   restores the old behaviour, explicitly.
+2. The report carries `ok`, `source`, `warnings` and `nodes_examined`, and
+   `render()` will not print a clean bill of health for a traversal it could
+   not complete - nor for one that examined zero nodes.
+3. The old hardcoded `count: 200` no longer truncates silently.
+"""
+
+import os
+import sys
+
+FILES = {}
+
+# ===========================================================================
+FILES["agentlens/impact.py"] = '''"""Blast radius: which agents and skills degrade if this asset changes?
 
 This is the payoff. Everything else exists to make this query answerable - so
 the read path has to be one we can trust.
@@ -389,7 +440,7 @@ def render(report: dict) -> str:
         if n_a or n_s or n_t:
             lines.append(f"  (partial: {n_a} agent(s), {n_s} skill(s), {n_t} tool(s) seen so far)")
             lines.append("")
-        return "\n".join(lines)
+        return "\\n".join(lines)
 
     if not (n_a or n_s or n_t):
         lines.append("  No agents downstream.")
@@ -399,7 +450,7 @@ def render(report: dict) -> str:
         else:
             lines.append("  Nothing was checked, so this is not a clean bill of health.")
         lines.append("")
-        return "\n".join(lines)
+        return "\\n".join(lines)
 
     lines.append(f"  {n_a} agent(s), {n_s} skill(s), {n_t} tool(s) degrade.")
     lines.append("")
@@ -418,4 +469,173 @@ def render(report: dict) -> str:
                 lines.append(f"        {item['repository']}/{item['source_path']}")
         lines.append("")
 
-    return "\n".join(lines)
+    return "\\n".join(lines)
+'''
+
+# ===========================================================================
+FILES["tests/test_impact_safety.py"] = '''"""The one rule: never report safety from a traversal we could not finish.
+
+No DataHub required - these drive render() with hand-built reports, which is
+the whole point. The failure being guarded against is a *silent* one, so it
+needs a test that fails loudly.
+"""
+
+from agentlens.impact import render
+
+BASE = {
+    "root": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders,PROD)",
+    "agents": [], "skills": [], "tools": [],
+    "total_downstream": 0, "total_downstream_scope": "agentlens-subgraph",
+    "source": "aspects",
+}
+
+
+def test_failed_traversal_never_says_safe():
+    out = render({**BASE, "ok": False, "nodes_examined": 0,
+                  "warnings": ["could not reach GMS"]})
+    assert "Safe to change" not in out
+    assert "TRAVERSAL INCOMPLETE" in out
+    assert "could not reach GMS" in out
+
+
+def test_zero_nodes_examined_never_says_safe():
+    """The stale-cache case: the walk completed, but over an empty graph."""
+    out = render({**BASE, "ok": True, "nodes_examined": 0, "warnings": []})
+    assert "Safe to change" not in out
+    assert "not a clean bill of health" in out
+
+
+def test_genuinely_clear_asset_does_say_safe():
+    out = render({**BASE, "ok": True, "nodes_examined": 12, "warnings": []})
+    assert "Safe to change" in out
+    assert "12 catalogued AgentLens node(s) were checked" in out
+
+
+def test_affected_agents_are_named_with_their_team():
+    out = render({
+        **BASE, "ok": True, "nodes_examined": 12, "warnings": [],
+        "agents": [{"urn": "u", "name": "finance-copilot", "kind": "agent",
+                    "subtype": "AI Agent", "repository": "github.com/acme/data-agents",
+                    "source_path": "agentlens.yaml", "owner_team": "fpa-platform",
+                    "hops": 2}],
+    })
+    assert "finance-copilot" in out
+    assert "fpa-platform" in out
+    assert "Safe to change" not in out
+
+
+def test_warnings_are_always_surfaced():
+    out = render({**BASE, "ok": True, "nodes_examined": 3,
+                  "warnings": ["using Dataset.lineage, which is cached"],
+                  "source": "graphql"})
+    assert "cached" in out
+    assert "read via: graphql" in out
+'''
+
+
+# ===========================================================================
+def patch_cli() -> bool:
+    """Thread --lineage-source through, and stop cmd_guard claiming safety."""
+    path = "agentlens/cli.py"
+    if not os.path.exists(path):
+        print("  MISS   cli.py not found")
+        return False
+    with open(path, encoding="utf-8") as fh:
+        cli = fh.read()
+    before = cli
+
+    # 1. pass the new argument through to blast_radius
+    cli = cli.replace(
+        "blast_radius(args.urn, max_hops=args.hops)",
+        'blast_radius(args.urn, max_hops=args.hops,\n'
+        '                           source=getattr(args, "lineage_source", "aspects"))',
+    )
+
+    # 2. cmd_guard must not call a degraded traversal "no agents affected"
+    old_guard = (
+        '    n_agents = len(report["agents"])\n'
+        "    if n_agents == 0 and not args.force:\n"
+        '        print("[2/3] DECIDE - no agents affected, no action taken\\n")\n'
+        "        return 0"
+    )
+    new_guard = (
+        '    if not report.get("ok", True) and not args.force:\n'
+        '        print("[2/3] DECIDE - traversal incomplete, refusing to report a result\\n")\n'
+        '        print("        re-run once the warnings above are resolved, or pass --force\\n")\n'
+        "        return 1\n"
+        "\n"
+        '    n_agents = len(report["agents"])\n'
+        "    if n_agents == 0 and not args.force:\n"
+        '        print("[2/3] DECIDE - no agents affected, no action taken\\n")\n'
+        "        return 0"
+    )
+    if old_guard in cli:
+        cli = cli.replace(old_guard, new_guard, 1)
+    elif "traversal incomplete, refusing" in cli:
+        pass
+    else:
+        print("  MISS   cli: cmd_guard early return (patch it by hand)")
+
+    # 3. register the flag on both parsers that take a urn
+    if '"--lineage-source"' not in cli:
+        anchor = '    p.set_defaults(func=cmd_impact)'
+        flag = (
+            '    p.add_argument(\n'
+            '        "--lineage-source",\n'
+            '        choices=["aspects", "graphql"],\n'
+            '        default="aspects",\n'
+            '        help="aspects (default) reads stored upstreamLineage and is cache-free; "\n'
+            '             "graphql uses Dataset.lineage, which is cached with no opt-out",\n'
+            "    )\n"
+        )
+        if anchor in cli:
+            cli = cli.replace(anchor, flag + anchor, 1)
+        anchor_g = '    p.set_defaults(func=cmd_guard)'
+        if anchor_g in cli:
+            cli = cli.replace(anchor_g, flag + anchor_g, 1)
+
+    if cli == before:
+        print("  ok     cli: already patched")
+        return True
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(cli)
+    print("  patch  cli: --lineage-source, guard refuses degraded traversals")
+    return True
+
+
+def main() -> int:
+    if not os.path.isdir("agentlens"):
+        print("Run this from inside agentlens-project/.")
+        return 1
+
+    for rel, content in FILES.items():
+        os.makedirs(os.path.dirname(rel) or ".", exist_ok=True)
+        with open(rel, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        print(f"  write  {rel}")
+
+    patch_cli()
+
+    print()
+    print("""  Done.
+
+  The bug: `emit` then `guard` back to back is t+0, inside the measured
+  Dataset.lineage stale window. A stale read returned nothing, and nothing
+  printed "Safe to change."
+
+  Check it still says the right thing when the catalog is empty:
+
+      python -m agentlens.cli impact "urn:li:dataset:(urn:li:dataPlatform:snowflake,nope,PROD)"
+
+  and that the old path is now explicit about what it is:
+
+      python -m agentlens.cli impact "<urn>" --lineage-source graphql
+
+  Then re-run ./demo.sh - the guard step should report the same agents as
+  before, but now with `read via: aspects` and a node count above it.
+""")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

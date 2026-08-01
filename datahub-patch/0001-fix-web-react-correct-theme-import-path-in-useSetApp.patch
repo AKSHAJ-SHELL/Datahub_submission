@@ -1,0 +1,35 @@
+From fb04caf8cd8c01b2980c504ee22452df64a25594 Mon Sep 17 00:00:00 2001
+From: Akshaj <akshaj@Akshajs-MacBook-Pro.local>
+Date: Fri, 31 Jul 2026 17:03:43 -0700
+Subject: [PATCH 1/2] fix(web-react): correct theme import path in
+ useSetAppTheme
+
+useSetAppTheme.tsx lives in src/app/ and dynamically imports
+`./conf/theme/${customThemeId}`, but the themes are at src/conf/theme/,
+so from that module the path needs `../`.
+
+esbuild's dependency scan cannot resolve the glob and fails the dev
+server boot outright with "Could not resolve import('./conf/theme/**/*')",
+so `vite` will not start when a custom theme id is configured.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ datahub-web-react/src/app/useSetAppTheme.tsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/datahub-web-react/src/app/useSetAppTheme.tsx b/datahub-web-react/src/app/useSetAppTheme.tsx
+index db9a8b3253..2d694287f3 100644
+--- a/datahub-web-react/src/app/useSetAppTheme.tsx
++++ b/datahub-web-react/src/app/useSetAppTheme.tsx
+@@ -29,7 +29,7 @@ export function useSetAppTheme() {
+     useEffect(() => {
+         if (customThemeId && customThemeId.endsWith('.json')) {
+             if (import.meta.env.DEV) {
+-                import(/* @vite-ignore */ `./conf/theme/${customThemeId}`)
++                import(/* @vite-ignore */ `../conf/theme/${customThemeId}`)
+                     .then((theme) => {
+                         updateTheme(theme);
+                     })
+-- 
+2.50.1 (Apple Git-155)
+

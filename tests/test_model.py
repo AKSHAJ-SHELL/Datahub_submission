@@ -9,9 +9,16 @@ def test_round_trip_preserves_everything():
         agents=[Agent(id="a", name="a", skills=["s"], owner_team="team")],
         skills=[
             Skill(
-                id="s", name="s",
-                data_refs=[DataRef(raw="analytics.orders", source_file="x.md",
-                                   confidence=0.9, resolved_urn="urn:li:dataset:(x)")],
+                id="s",
+                name="s",
+                data_refs=[
+                    DataRef(
+                        raw="analytics.orders",
+                        source_file="x.md",
+                        confidence=0.9,
+                        resolved_urn="urn:li:dataset:(x)",
+                    )
+                ],
             )
         ],
         tools=[Tool(name="t", server="srv", source_file=".mcp.json")],
@@ -31,6 +38,5 @@ def test_empty_manifest_round_trips():
 
 
 def test_summary_counts_data_refs():
-    m = Manifest(skills=[Skill(id="s", name="s",
-                              data_refs=[DataRef(raw="a.b", source_file="x")])])
+    m = Manifest(skills=[Skill(id="s", name="s", data_refs=[DataRef(raw="a.b", source_file="x")])])
     assert "1 data reference" in m.summary()

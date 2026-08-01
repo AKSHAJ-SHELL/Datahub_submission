@@ -16,6 +16,7 @@ would be against native entities. When those ship, only this file changes.
 
 from __future__ import annotations
 
+import logging
 import os
 
 import requests
@@ -32,6 +33,8 @@ TOKEN = os.environ.get("DATAHUB_GMS_TOKEN", "")
 HEADERS = {"Content-Type": "application/json"}
 if TOKEN:
     HEADERS["Authorization"] = f"Bearer {TOKEN}"
+
+logger = logging.getLogger(__name__)
 
 SUBTYPE_AGENT = "AI Agent"
 SUBTYPE_SKILL = "Agent Skill"
@@ -63,8 +66,14 @@ class Emitter:
         )
 
     # -- generic node -----------------------------------------------------
-    def _node(self, urn: str, display: str, description: str,
-              subtype: str, props: dict[str, str]) -> None:
+    def _node(
+        self,
+        urn: str,
+        display: str,
+        description: str,
+        subtype: str,
+        props: dict[str, str],
+    ) -> None:
         clean = {k: str(v) for k, v in props.items() if v not in (None, "", [])}
         self.rest.emit_mcp(
             MetadataChangeProposalWrapper(
@@ -90,9 +99,7 @@ class Emitter:
                 entityUrn=downstream,
                 aspect=sc.UpstreamLineageClass(
                     upstreams=[
-                        sc.UpstreamClass(
-                            dataset=u, type=sc.DatasetLineageTypeClass.TRANSFORMED
-                        )
+                        sc.UpstreamClass(dataset=u, type=sc.DatasetLineageTypeClass.TRANSFORMED)
                         for u in dict.fromkeys(upstreams)
                     ]
                 ),
@@ -103,16 +110,12 @@ class Emitter:
     def tag(self, urn: str, tag: str) -> None:
         tag_urn = f"urn:li:tag:{tag}"
         self.rest.emit_mcp(
-            MetadataChangeProposalWrapper(
-                entityUrn=tag_urn, aspect=sc.TagPropertiesClass(name=tag)
-            )
+            MetadataChangeProposalWrapper(entityUrn=tag_urn, aspect=sc.TagPropertiesClass(name=tag))
         )
         self.rest.emit_mcp(
             MetadataChangeProposalWrapper(
                 entityUrn=urn,
-                aspect=sc.GlobalTagsClass(
-                    tags=[sc.TagAssociationClass(tag=tag_urn)]
-                ),
+                aspect=sc.GlobalTagsClass(tags=[sc.TagAssociationClass(tag=tag_urn)]),
             )
         )
 
@@ -137,18 +140,23 @@ class Emitter:
             urn = urn_for("tool", f"{tool.server}.{tool.name}")
             index[f"tool:{tool.name}"] = urn
             self._node(
-                urn, tool.name,
+                urn,
+                tool.name,
                 f"MCP tool `{tool.name}` from server `{tool.server}`.\n\n_Catalogued by AgentLens._",
                 SUBTYPE_TOOL,
-                {"agentlens.kind": "tool", "agentlens.server": tool.server,
-                 "agentlens.source_file": tool.source_file},
+                {
+                    "agentlens.kind": "tool",
+                    "agentlens.server": tool.server,
+                    "agentlens.source_file": tool.source_file,
+                },
             )
 
         for skill in manifest.skills:
             urn = urn_for("skill", skill.id)
             index[f"skill:{skill.id}"] = urn
             self._node(
-                urn, skill.name,
+                urn,
+                skill.name,
                 (skill.description or "No description.") + "\n\n_Catalogued by AgentLens._",
                 SUBTYPE_SKILL,
                 {
@@ -169,7 +177,8 @@ class Emitter:
             urn = urn_for("agent", agent.id)
             index[f"agent:{agent.id}"] = urn
             self._node(
-                urn, agent.name,
+                urn,
+                agent.name,
                 (agent.description or "No description.") + "\n\n_Catalogued by AgentLens._",
                 SUBTYPE_AGENT,
                 {
@@ -190,16 +199,20 @@ class Emitter:
                 requests.post(
                     f"{GMS}/openapi/v3/entity/application",
                     headers=HEADERS,
-                    json=[{
-                        "urn": f"urn:li:application:agentlens-{agent.id}",
-                        "applicationProperties": {
-                            "value": {"name": agent.name,
-                                      "description": agent.description or "AI agent."}
-                        },
-                    }],
+                    json=[
+                        {
+                            "urn": f"urn:li:application:agentlens-{agent.id}",
+                            "applicationProperties": {
+                                "value": {
+                                    "name": agent.name,
+                                    "description": agent.description or "AI agent.",
+                                }
+                            },
+                        }
+                    ],
                     timeout=20,
                 )
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 - SDK raises undocumented types
+                logger.warning("application entity for %s failed: %s", agent.id, exc)
 
         return index

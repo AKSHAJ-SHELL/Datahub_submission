@@ -1,0 +1,74 @@
+[project]
+name = "agentlens"
+version = "0.1.0"
+description = "Lineage for AI agents, backed by DataHub."
+requires-python = ">=3.10"
+dependencies = [
+    "acryl-datahub>=1.6.0",
+    "requests>=2.31",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "types-requests", "types-PyYAML"]
+
+[project.scripts]
+agentlens = "agentlens.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agentlens*"]
+
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+# One-shot setup scripts. Their output already lives in agentlens/; they are
+# kept only so the build is reproducible from scratch.
+exclude = ["add_*.py", "patch_fixes.py", "fix_lint.py", "scaffold_*.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear - mutable defaults, shadowed loop vars
+    "C4",   # comprehension simplification
+    "SIM",  # obvious simplifications
+    "BLE",  # blind except - we want to be asked about these
+    "ISC",  # implicit string concat
+]
+ignore = [
+    "E501",  # line length - the formatter owns this
+    "B008",  # function call in default arg - fine for the CLI
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]        # conftest manipulates sys.path before imports
+"tools/*" = ["BLE001", "S110"]  # diagnostic probes: report everything, crash on nothing
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true      # datahub ships partial stubs
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+disallow_untyped_defs = false      # pragmatic: this is an application, not a library API
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true

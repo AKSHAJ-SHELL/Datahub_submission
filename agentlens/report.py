@@ -10,7 +10,6 @@ impact propagates rightward one column per hop. Distance is the structure.
 from __future__ import annotations
 
 import html
-import json
 from datetime import datetime, timezone
 
 CSS = """
@@ -155,8 +154,8 @@ FONTS = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     '<link href="https://fonts.googleapis.com/css2?'
-    'family=IBM+Plex+Mono:wght@400;500&'
-    'family=IBM+Plex+Sans:wght@400;600&'
+    "family=IBM+Plex+Mono:wght@400;500&"
+    "family=IBM+Plex+Sans:wght@400;600&"
     'family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">'
 )
 
@@ -178,9 +177,13 @@ def _cascade(report: dict) -> str:
     items = report["agents"] + report["skills"] + report["tools"]
     max_hop = max([i["hops"] for i in items], default=0)
 
-    cols = ['<div class="hop"><div class="hop-n">source</div>'
+    cols = [
+        (
+            '<div class="hop"><div class="hop-n">source</div>'
             f'<div class="node root"><div class="nm">{_e(_short(report["root"]))}</div>'
-            '<div class="kd">changed asset</div></div></div>']
+            '<div class="kd">changed asset</div></div></div>'
+        )
+    ]
 
     for hop in range(1, max_hop + 1):
         at_hop = [i for i in items if i["hops"] == hop]
@@ -195,7 +198,8 @@ def _cascade(report: dict) -> str:
             )
         cols.append(
             f'<div class="hop"><div class="hop-n">{hop} hop{"s" if hop > 1 else ""}</div>'
-            + "".join(nodes) + "</div>"
+            + "".join(nodes)
+            + "</div>"
         )
 
     return '<div class="cascade">' + "".join(cols) + "</div>"
@@ -215,7 +219,7 @@ def _table(title: str, items: list[dict]) -> str:
             "<tr>"
             f'<td class="name">{_e(item["name"])}</td>'
             f'<td><span class="pill">{_e(item["hops"])} '
-            f'hop{"s" if item["hops"] != 1 else ""}</span></td>'
+            f"hop{'s' if item['hops'] != 1 else ''}</span></td>"
             f"<td>{_e(team) if team != '&mdash;' else team}</td>"
             f'<td class="path">{_e(loc) if loc != "&mdash;" else loc}</td>'
             "</tr>"
@@ -290,8 +294,7 @@ def render_html(report: dict, reason: str = "", actions: list[str] | None = None
 </div></body></html>"""
 
 
-def write_html(report: dict, path: str, reason: str = "",
-               actions: list[str] | None = None) -> str:
+def write_html(report: dict, path: str, reason: str = "", actions: list[str] | None = None) -> str:
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(render_html(report, reason, actions))
     return path

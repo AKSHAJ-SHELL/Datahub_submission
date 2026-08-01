@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 
 import yaml
 
 from .model import Agent, DataRef, Manifest, Skill, Tool
+
+logger = logging.getLogger(__name__)
 
 # FROM / JOIN / UPDATE / INTO followed by a table-ish token
 SQL_TABLE = re.compile(
@@ -31,10 +34,53 @@ SQL_TABLE = re.compile(
 # Bare dotted identifiers - schema.table or db.schema.table
 DOTTED = re.compile(r"\b([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*){1,3})\b")
 
+# `FROM analytics.orders o` binds `o` as an alias for that table.
+ALIAS_BINDING = re.compile(
+    r"\b(?:from|join)\s+([a-zA-Z_][\w.]*)\s+(?:as\s+)?([a-zA-Z_]\w*)\b",
+    re.IGNORECASE,
+)
+
+# Words that follow a table name but are not aliases.
+SQL_KEYWORDS = {
+    "where",
+    "group",
+    "order",
+    "having",
+    "join",
+    "on",
+    "left",
+    "right",
+    "inner",
+    "outer",
+    "full",
+    "cross",
+    "limit",
+    "union",
+    "select",
+    "and",
+    "or",
+    "as",
+    "using",
+    "set",
+    "values",
+    "returning",
+    "window",
+    "qualify",
+}
+
 # Things that look dotted but are not tables
 NOISE = {
-    "e.g", "i.e", "etc.al", "self.name", "os.path", "np.array", "pd.read_csv",
-    "datahub.com", "github.com", "docs.datahub.com", "www.example.com",
+    "e.g",
+    "i.e",
+    "etc.al",
+    "self.name",
+    "os.path",
+    "np.array",
+    "pd.read_csv",
+    "datahub.com",
+    "github.com",
+    "docs.datahub.com",
+    "www.example.com",
 }
 NOISE_PREFIXES = ("http", "www", "self.", "os.", "np.", "pd.", "json.", "yaml.")
 
@@ -52,14 +98,36 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
         return {}, text
     try:
         meta = yaml.safe_load(parts[1]) or {}
-    except Exception:
+    except yaml.YAMLError as exc:
+        logger.debug("malformed frontmatter, ignoring: %s", exc)
         meta = {}
     return (meta if isinstance(meta, dict) else {}), parts[2]
 
 
+def _bound_aliases(text: str) -> set[str]:
+    """Find table aliases bound by FROM/JOIN so we can tell columns from tables.
+
+    `FROM analytics.orders o` binds `o`, which means a later `o.created_at`
+    is a column reference, not a table. Without this the bare dotted-identifier
+    pass emits every qualified column in every query as a table candidate.
+    """
+    aliases: set[str] = set()
+    for match in ALIAS_BINDING.finditer(text):
+        candidate = match.group(2).lower()
+        if candidate not in SQL_KEYWORDS:
+            aliases.add(candidate)
+    return aliases
+
+
 def extract_data_refs(text: str, source_file: str) -> list[DataRef]:
-    """Pull probable table references out of prose or SQL."""
+    """Pull probable table references out of prose or SQL.
+
+    Two passes. Tokens following FROM/JOIN/INTO/UPDATE are near-certain tables
+    (0.9). Bare dotted identifiers are weaker candidates (0.4) and are dropped
+    when their prefix is a bound alias, a known module, or a filename.
+    """
     refs: dict[str, DataRef] = {}
+    aliases = _bound_aliases(text)
 
     for match in SQL_TABLE.finditer(text):
         token = match.group(1)
@@ -69,6 +137,8 @@ def extract_data_refs(text: str, source_file: str) -> list[DataRef]:
         token = match.group(1)
         low = token.lower()
         if low in refs:
+            continue
+        if low.split(".")[0] in aliases:
             continue
         if low in NOISE or any(low.startswith(p) for p in NOISE_PREFIXES):
             continue
@@ -85,7 +155,9 @@ def scan_mcp_configs(root: str) -> list[Tool]:
     seen = set()
 
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in {".git", "node_modules", ".venv", "__pycache__"}]
+        dirnames[:] = [
+            d for d in dirnames if d not in {".git", "node_modules", ".venv", "__pycache__"}
+        ]
         for name in filenames:
             rel = os.path.relpath(os.path.join(dirpath, name), root)
             if name not in {"mcp.json", ".mcp.json"} and rel not in candidates:
@@ -94,11 +166,12 @@ def scan_mcp_configs(root: str) -> list[Tool]:
             try:
                 with open(path) as fh:
                     data = json.load(fh)
-            except Exception:
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.debug("skipping mcp config %s: %s", rel, exc)
                 continue
             servers = data.get("mcpServers") or data.get("servers") or {}
             for server_name, server_cfg in servers.items():
-                declared = []
+                declared: list[str] = []
                 if isinstance(server_cfg, dict):
                     declared = server_cfg.get("tools") or []
                 if declared:
@@ -118,7 +191,9 @@ def scan_mcp_configs(root: str) -> list[Tool]:
 def scan_skills(root: str, repository: str) -> list[Skill]:
     skills: list[Skill] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in {".git", "node_modules", ".venv", "__pycache__"}]
+        dirnames[:] = [
+            d for d in dirnames if d not in {".git", "node_modules", ".venv", "__pycache__"}
+        ]
         for name in filenames:
             if name.upper() != "SKILL.MD":
                 continue
@@ -127,7 +202,8 @@ def scan_skills(root: str, repository: str) -> list[Skill]:
             try:
                 with open(path, encoding="utf-8") as fh:
                     text = fh.read()
-            except Exception:
+            except OSError as exc:
+                logger.debug("skipping skill %s: %s", rel, exc)
                 continue
 
             meta, body = _parse_frontmatter(text)
@@ -150,14 +226,19 @@ def scan_skills(root: str, repository: str) -> list[Skill]:
 def scan_agents(root: str, repository: str, known_skills: list[str]) -> list[Agent]:
     """Read agentlens.yaml if present; otherwise infer one agent per repo."""
     agents: list[Agent] = []
-    for candidate in ("agentlens.yaml", "agentlens.yml", os.path.join("agents", "agentlens.yaml")):
+    for candidate in (
+        "agentlens.yaml",
+        "agentlens.yml",
+        os.path.join("agents", "agentlens.yaml"),
+    ):
         path = os.path.join(root, candidate)
         if not os.path.exists(path):
             continue
         try:
             with open(path) as fh:
                 data = yaml.safe_load(fh) or {}
-        except Exception:
+        except (OSError, yaml.YAMLError) as exc:
+            logger.debug("skipping %s: %s", candidate, exc)
             continue
         for entry in data.get("agents", []):
             agents.append(

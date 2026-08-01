@@ -4,10 +4,9 @@ import os
 
 import pytest
 
-from tests.conftest import needs_gms
-
 from agentlens.impact import blast_radius
 from agentlens.resolver import Resolver
+from tests.conftest import needs_gms
 
 
 @needs_gms

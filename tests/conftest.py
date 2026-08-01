@@ -12,7 +12,7 @@ GMS = os.environ.get("DATAHUB_GMS_URL", "http://localhost:8080").rstrip("/")
 def _gms_up() -> bool:
     try:
         return requests.get(f"{GMS}/config", timeout=3).status_code == 200
-    except Exception:
+    except requests.RequestException:
         return False
 
 

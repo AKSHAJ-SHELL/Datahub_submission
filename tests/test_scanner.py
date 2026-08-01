@@ -82,7 +82,7 @@ class TestScanSkills:
         (d / "SKILL.md").write_text("# bare\n\nFROM analytics.things\n")
         skills = scan_skills(str(tmp_path), "r")
         assert len(skills) == 1
-        assert skills[0].id == "bare"          # falls back to directory name
+        assert skills[0].id == "bare"  # falls back to directory name
 
     def test_malformed_frontmatter_does_not_crash(self, tmp_path):
         d = tmp_path / "skills" / "broken"
@@ -144,3 +144,38 @@ class TestScan:
     def test_summary_is_readable(self, skill_repo):
         s = scan(str(skill_repo), "r").summary()
         assert "agent" in s and "skill" in s
+
+
+class TestAliasBinding:
+    """The fix for the 8/24 resolution rate: most of those 24 were columns."""
+
+    def test_drops_aliased_columns(self):
+        text = "SELECT o.created_at, o.line_total FROM analytics.orders o"
+        raws = {r.raw.lower() for r in extract_data_refs(text, "x.md")}
+        assert "analytics.orders" in raws
+        assert "o.created_at" not in raws
+        assert "o.line_total" not in raws
+
+    def test_drops_aliases_from_joins(self):
+        text = "FROM analytics.orders o JOIN analytics.products p ON p.product_id = o.product_id"
+        raws = {r.raw.lower() for r in extract_data_refs(text, "x.md")}
+        assert "analytics.orders" in raws
+        assert "analytics.products" in raws
+        assert "p.product_id" not in raws
+        assert "o.product_id" not in raws
+
+    def test_handles_as_keyword(self):
+        text = "FROM analytics.orders AS o WHERE o.status = 'x'"
+        raws = {r.raw.lower() for r in extract_data_refs(text, "x.md")}
+        assert "o.status" not in raws
+
+    def test_does_not_treat_keywords_as_aliases(self):
+        """`FROM analytics.orders WHERE ...` must not bind `where`."""
+        text = "FROM analytics.orders WHERE where.thing = 1"
+        raws = {r.raw.lower() for r in extract_data_refs(text, "x.md")}
+        assert "analytics.orders" in raws
+
+    def test_unaliased_dotted_tokens_survive(self):
+        text = "The agent reads warehouse.analytics.orders directly."
+        raws = {r.raw.lower() for r in extract_data_refs(text, "x.md")}
+        assert "warehouse.analytics.orders" in raws

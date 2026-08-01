@@ -1,0 +1,824 @@
+From e7824e4a943f308828045eb142a4fec93090df0e Mon Sep 17 00:00:00 2001
+From: Akshaj <akshaj@Akshajs-MacBook-Pro.local>
+Date: Fri, 31 Jul 2026 17:03:56 -0700
+Subject: [PATCH 2/2] feat(web-react): add an Agents tab to the dataset profile
+
+Adds an "Agents" tab next to Lineage on the dataset profile, answering the
+question lineage raises but cannot settle: of the consumers downstream, which
+ones actually depend on the part you are about to change.
+
+The tab simulates a schema change (drop a column, rename the table, drop the
+table) and classifies every downstream agent and skill as breaks / degrades /
+unchanged. A skill that reads the table but never names the changed column in
+its instruction text comes back unchanged - lineage alone would have flagged it.
+
+Visibility is gated on the `has-agent-consumers` tag, which rides in on
+globalTags that the dataset query already fetches, so the tab appears on exactly
+the tables an agent fleet reads and costs no extra request. Data comes from a
+local `agentlens serve` process over a same-origin /agentlens vite proxy.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../app/entityV2/dataset/DatasetEntity.tsx    |  15 +
+ .../profile/AgentImpact/AgentImpactTab.tsx    | 414 ++++++++++++++++++
+ .../profile/AgentImpact/hasAgentConsumers.ts  |  16 +
+ .../dataset/profile/AgentImpact/simulate.ts   | 129 ++++++
+ .../dataset/profile/AgentImpact/types.ts      |  65 +++
+ .../AgentImpact/useAgentLensPayload.ts        |  58 +++
+ datahub-web-react/vite.config.ts              |  15 +-
+ 7 files changed, 709 insertions(+), 3 deletions(-)
+ create mode 100644 datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/AgentImpactTab.tsx
+ create mode 100644 datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/hasAgentConsumers.ts
+ create mode 100644 datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/simulate.ts
+ create mode 100644 datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/types.ts
+ create mode 100644 datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/useAgentLensPayload.ts
+
+diff --git a/datahub-web-react/src/app/entityV2/dataset/DatasetEntity.tsx b/datahub-web-react/src/app/entityV2/dataset/DatasetEntity.tsx
+index add7ed9958..994463a87f 100644
+--- a/datahub-web-react/src/app/entityV2/dataset/DatasetEntity.tsx
++++ b/datahub-web-react/src/app/entityV2/dataset/DatasetEntity.tsx
+@@ -7,6 +7,7 @@ import {
+     FundOutlined,
+     LayoutOutlined,
+     PartitionOutlined,
++    RobotOutlined,
+     UnlockOutlined,
+     UnorderedListOutlined,
+     WarningOutlined,
+@@ -22,6 +23,8 @@ import { GenericEntityProperties } from '@app/entity/shared/types';
+ import { Entity, EntityCapabilityType, IconStyleType, PreviewType } from '@app/entityV2/Entity';
+ import { getGovernanceTabName, getQualityTabName } from '@app/entityV2/dataset/constants';
+ import { Preview } from '@app/entityV2/dataset/preview/Preview';
++import AgentImpactTab from '@app/entityV2/dataset/profile/AgentImpact/AgentImpactTab';
++import { hasAgentConsumers } from '@app/entityV2/dataset/profile/AgentImpact/hasAgentConsumers';
+ import { OperationsTab } from '@app/entityV2/dataset/profile/OperationsTab';
+ import { DatasetStatsSummarySubHeader } from '@app/entityV2/dataset/profile/stats/stats/DatasetStatsSummarySubHeader';
+ import { useGetColumnTabCount } from '@app/entityV2/dataset/profile/useGetColumnTabCount';
+@@ -303,6 +306,18 @@ export class DatasetEntity implements Entity<Dataset> {
+                 component: LineageTab,
+                 icon: PartitionOutlined,
+             },
++            {
++                // Next to Lineage on purpose: it answers the question Lineage
++                // raises but cannot settle — of the consumers downstream, which
++                // ones actually depend on the part you are changing.
++                name: 'Agents',
++                component: AgentImpactTab,
++                icon: RobotOutlined,
++                display: {
++                    visible: (_, dataset: GetDatasetQuery) => hasAgentConsumers(dataset),
++                    enabled: (_, dataset: GetDatasetQuery) => hasAgentConsumers(dataset),
++                },
++            },
+             {
+                 name: i18next.t('entity.types:shared.accessTab'),
+                 component: AccessManagement,
+diff --git a/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/AgentImpactTab.tsx b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/AgentImpactTab.tsx
+new file mode 100644
+index 0000000000..f8b3c1d51b
+--- /dev/null
++++ b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/AgentImpactTab.tsx
+@@ -0,0 +1,414 @@
++/* eslint-disable i18next/no-literal-string -- AgentLens tab, English-only pending
++   extraction into an `entity.profile.agents` namespace across all ten locales.
++   Machine-translating findings people act on is worse than leaving them in English. */
++import { Button, Pill } from '@components';
++import React, { useMemo, useState } from 'react';
++import styled from 'styled-components';
++
++import { useEntityData } from '@app/entity/shared/EntityContext';
++import { cliCommand, shortName, simulate } from '@app/entityV2/dataset/profile/AgentImpact/simulate';
++import { ChangeKind, Effect, Severity } from '@app/entityV2/dataset/profile/AgentImpact/types';
++import { PAYLOAD_URL, useAgentLensPayload } from '@app/entityV2/dataset/profile/AgentImpact/useAgentLensPayload';
++
++/**
++ * "If I change this table, which agents lose context?"
++ *
++ * DataHub's own impact analysis answers a coarser question — which consumers
++ * touch this table at all. For a dropped column that over-counts: a skill that
++ * reads the table but never names the column is fine. This tab runs the same
++ * simulation as `agentlens sandbox` and shows both numbers, because the gap
++ * between them is the whole point.
++ */
++
++const KINDS: { kind: ChangeKind; label: string }[] = [
++    { kind: 'drop-column', label: 'Drop a column' },
++    { kind: 'rename-table', label: 'Rename the table' },
++    { kind: 'drop-table', label: 'Drop the table' },
++];
++
++const SEVERITY_LABEL: Record<Severity, string> = {
++    breaks: 'break',
++    degrades: 'degrade',
++    unchanged: 'unaffected',
++};
++
++const Wrapper = styled.div`
++    padding: 20px 24px 40px;
++    overflow-y: auto;
++    height: 100%;
++`;
++
++const Note = styled.div`
++    color: ${(props) => props.theme.colors.textSecondary};
++    font-size: 13px;
++    line-height: 1.55;
++    max-width: 720px;
++`;
++
++const Mono = styled.code`
++    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
++    background: ${(props) => props.theme.colors.bgCode};
++    border-radius: 4px;
++    padding: 1px 5px;
++    font-size: 0.9em;
++`;
++
++const Controls = styled.div`
++    display: flex;
++    flex-direction: column;
++    gap: 14px;
++    margin: 18px 0 22px;
++`;
++
++const Row = styled.div`
++    display: flex;
++    gap: 8px;
++    flex-wrap: wrap;
++    align-items: center;
++`;
++
++const Label = styled.div`
++    font-size: 11px;
++    font-weight: 700;
++    letter-spacing: 0.08em;
++    text-transform: uppercase;
++    color: ${(props) => props.theme.colors.textTertiary};
++    margin-bottom: 7px;
++`;
++
++const Clickable = styled.span`
++    cursor: pointer;
++`;
++
++const TextInput = styled.input`
++    background: ${(props) => props.theme.colors.bgInput};
++    border: 1px solid ${(props) => props.theme.colors.borderInput};
++    color: ${(props) => props.theme.colors.text};
++    border-radius: 6px;
++    padding: 6px 10px;
++    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
++    font-size: 13px;
++    min-width: 260px;
++
++    &:focus {
++        outline: none;
++        border-color: ${(props) => props.theme.colors.borderInputFocus};
++    }
++`;
++
++const Counts = styled.div`
++    display: flex;
++    gap: 10px;
++    flex-wrap: wrap;
++    margin-bottom: 18px;
++`;
++
++const surfaceFor = (severity: Severity) => (props: any) =>
++    ({
++        breaks: props.theme.colors.bgSurfaceError,
++        degrades: props.theme.colors.bgSurfaceWarning,
++        unchanged: props.theme.colors.bgSurface,
++    })[severity];
++
++const borderFor = (severity: Severity) => (props: any) =>
++    ({
++        breaks: props.theme.colors.borderError,
++        degrades: props.theme.colors.borderWarning,
++        unchanged: props.theme.colors.border,
++    })[severity];
++
++const inkFor = (severity: Severity) => (props: any) =>
++    ({
++        breaks: props.theme.colors.textOnSurfaceError,
++        degrades: props.theme.colors.textOnSurfaceWarning,
++        unchanged: props.theme.colors.textSecondary,
++    })[severity];
++
++const Count = styled.div<{ $severity: Severity }>`
++    background: ${(props) => surfaceFor(props.$severity)(props)};
++    border: 1px solid ${(props) => borderFor(props.$severity)(props)};
++    color: ${(props) => inkFor(props.$severity)(props)};
++    border-radius: 9px;
++    padding: 10px 18px;
++    min-width: 108px;
++
++    b {
++        display: block;
++        font-size: 26px;
++        line-height: 1.1;
++        font-weight: 700;
++    }
++
++    span {
++        font-size: 12px;
++        text-transform: uppercase;
++        letter-spacing: 0.06em;
++    }
++`;
++
++const EffectRow = styled.div<{ $severity: Severity }>`
++    display: grid;
++    grid-template-columns: 84px minmax(140px, 1fr) minmax(200px, 2fr) minmax(90px, auto);
++    gap: 14px;
++    align-items: center;
++    padding: 9px 14px;
++    border: 1px solid ${(props) => borderFor(props.$severity)(props)};
++    border-left-width: 4px;
++    background: ${(props) => surfaceFor(props.$severity)(props)};
++    border-radius: 8px;
++    margin-bottom: 6px;
++    font-size: 13px;
++
++    @media (max-width: 860px) {
++        grid-template-columns: 1fr;
++        gap: 4px;
++    }
++`;
++
++const Verdict = styled.span<{ $severity: Severity }>`
++    font-size: 10px;
++    font-weight: 800;
++    letter-spacing: 0.08em;
++    color: ${(props) => inkFor(props.$severity)(props)};
++`;
++
++const Name = styled.span`
++    font-weight: 600;
++    color: ${(props) => props.theme.colors.text};
++`;
++
++const Why = styled.span`
++    color: ${(props) => props.theme.colors.textSecondary};
++`;
++
++const Meta = styled.span`
++    color: ${(props) => props.theme.colors.textTertiary};
++    font-size: 12px;
++    text-align: right;
++
++    @media (max-width: 860px) {
++        text-align: left;
++    }
++`;
++
++const Callout = styled.div`
++    margin: 18px 0;
++    padding: 13px 16px;
++    background: ${(props) => props.theme.colors.bgSurfaceInfo};
++    border: 1px solid ${(props) => props.theme.colors.borderInformation};
++    color: ${(props) => props.theme.colors.textOnSurfaceInformation};
++    border-radius: 9px;
++    font-size: 13px;
++    line-height: 1.6;
++    max-width: 760px;
++`;
++
++const Cli = styled.div`
++    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
++    font-size: 12.5px;
++    background: ${(props) => props.theme.colors.bgCodeBlock};
++    color: ${(props) => props.theme.colors.textSecondary};
++    border: 1px solid ${(props) => props.theme.colors.border};
++    border-radius: 8px;
++    padding: 10px 14px;
++    margin-top: 20px;
++    word-break: break-all;
++`;
++
++const Empty = styled.div`
++    padding: 22px;
++    border: 1px dashed ${(props) => props.theme.colors.border};
++    border-radius: 9px;
++    color: ${(props) => props.theme.colors.textSecondary};
++    font-size: 13px;
++    line-height: 1.6;
++    max-width: 720px;
++`;
++
++function EffectList({ effects }: { effects: Effect[] }) {
++    return (
++        <div>
++            {effects.map((effect) => (
++                <EffectRow key={`${effect.kind}:${effect.id}`} $severity={effect.severity}>
++                    <Verdict $severity={effect.severity}>{effect.severity.toUpperCase()}</Verdict>
++                    <Name>{effect.name}</Name>
++                    <Why>{effect.why}</Why>
++                    <Meta>{effect.ownerTeam || effect.kind}</Meta>
++                </EffectRow>
++            ))}
++        </div>
++    );
++}
++
++export default function AgentImpactTab() {
++    const { urn } = useEntityData();
++    const { payload, loading, error } = useAgentLensPayload();
++
++    const [kind, setKind] = useState<ChangeKind>('drop-column');
++    const [column, setColumn] = useState('');
++    const [newName, setNewName] = useState('');
++
++    // The payload is keyed by the resolved dataset urn, so this is normally a
++    // direct hit. The substring fallback covers a urn that differs only by env
++    // or platform casing, which is otherwise an invisible empty tab.
++    const tableUrn = useMemo(() => {
++        if (!payload) return undefined;
++        if (payload.tables[urn]) return urn;
++        return Object.keys(payload.tables).find((candidate) => candidate.includes(shortName(urn)));
++    }, [payload, urn]);
++
++    const change = useMemo(() => ({ table: tableUrn || '', kind, column, newName }), [tableUrn, kind, column, newName]);
++
++    const needsColumn = kind === 'drop-column' && !column;
++    const effects = useMemo(
++        () => (payload && tableUrn && !needsColumn ? simulate(payload, change) : []),
++        [payload, tableUrn, needsColumn, change],
++    );
++
++    const count = (severity: Severity) => effects.filter((e) => e.severity === severity).length;
++
++    if (loading) {
++        return (
++            <Wrapper>
++                <Note>Loading the fleet…</Note>
++            </Wrapper>
++        );
++    }
++
++    if (error || !payload) {
++        return (
++            <Wrapper>
++                <Empty>
++                    Could not reach AgentLens at <Mono>{PAYLOAD_URL}</Mono> ({error}).
++                    <br />
++                    Start it with <Mono>agentlens serve</Mono> in your agent repo, then reload.
++                </Empty>
++            </Wrapper>
++        );
++    }
++
++    if (!tableUrn) {
++        return (
++            <Wrapper>
++                <Empty>
++                    No scanned skill reads this table. AgentLens knows about {Object.keys(payload.tables).length} tables
++                    across {payload.counts.agents} agents and {payload.counts.skills} skills
++                    {payload.repository ? ` in ${payload.repository}` : ''}.
++                </Empty>
++            </Wrapper>
++        );
++    }
++
++    const readers = payload.tables[tableUrn]?.readers ?? [];
++    const downstream = effects.length;
++    const flagged = count('breaks') + count('degrades');
++    const spared = downstream - flagged;
++
++    return (
++        <Wrapper>
++            <Note>
++                {payload.counts.agents} agents, {payload.counts.skills} skills and {payload.counts.tools} MCP tools were
++                scanned from source
++                {payload.repository ? ` in ${payload.repository}` : ''}. {readers.length}{' '}
++                {readers.length === 1 ? 'skill' : 'skills'} read <Mono>{shortName(tableUrn)}</Mono>.
++            </Note>
++
++            <Controls>
++                <div>
++                    <Label>Simulate a change</Label>
++                    <Row>
++                        {KINDS.map((option) => (
++                            <Button
++                                key={option.kind}
++                                variant={kind === option.kind ? 'filled' : 'outline'}
++                                color="primary"
++                                size="sm"
++                                onClick={() => setKind(option.kind)}
++                            >
++                                {option.label}
++                            </Button>
++                        ))}
++                    </Row>
++                </div>
++
++                {kind === 'drop-column' && (
++                    <div>
++                        <Label>Column — click one, or type any</Label>
++                        <Row>
++                            {payload.columns.map((candidate) => (
++                                <Clickable key={candidate} onClick={() => setColumn(candidate)}>
++                                    <Pill
++                                        label={candidate}
++                                        size="sm"
++                                        clickable
++                                        color={column === candidate ? 'violet' : 'gray'}
++                                        variant={column === candidate ? 'filled' : 'outline'}
++                                    />
++                                </Clickable>
++                            ))}
++                        </Row>
++                        <Row style={{ marginTop: 10 }}>
++                            <TextInput
++                                value={column}
++                                placeholder="column name"
++                                autoComplete="off"
++                                onChange={(e) => setColumn(e.target.value.trim())}
++                            />
++                        </Row>
++                    </div>
++                )}
++
++                {kind === 'rename-table' && (
++                    <div>
++                        <Label>New name</Label>
++                        <TextInput
++                            value={newName}
++                            placeholder={`${shortName(tableUrn)}_v2`}
++                            autoComplete="off"
++                            onChange={(e) => setNewName(e.target.value.trim())}
++                        />
++                    </div>
++                )}
++            </Controls>
++
++            <Counts>
++                {(['breaks', 'degrades', 'unchanged'] as Severity[]).map((severity) => (
++                    <Count key={severity} $severity={severity}>
++                        <b>{count(severity)}</b>
++                        <span>{SEVERITY_LABEL[severity]}</span>
++                    </Count>
++                ))}
++            </Counts>
++
++            {effects.length ? (
++                <EffectList effects={effects} />
++            ) : (
++                <Empty>{needsColumn ? 'Pick a column, or type one.' : 'Nothing downstream reads this table.'}</Empty>
++            )}
++
++            {effects.length > 0 && (
++                <Callout>
++                    {kind === 'drop-column' ? (
++                        <>
++                            Lineage-only impact analysis flags every consumer of this table: <b>{downstream}</b>.
++                            AgentLens says <b>{flagged}</b>, because only some name <Mono>{column}</Mono> in their skill
++                            text.
++                            {spared > 0 ? <> {spared} would have been chased for nothing.</> : null}
++                        </>
++                    ) : (
++                        <>
++                            Every consumer breaks — the table itself is going away, so naming the column does not help.{' '}
++                            <b>{downstream}</b> affected.
++                        </>
++                    )}
++                </Callout>
++            )}
++
++            <Cli>{cliCommand(change)}</Cli>
++            <Note style={{ marginTop: 10 }}>
++                The tab runs the same simulation as the CLI, over data rebuilt on each request. The CLI is
++                authoritative.
++            </Note>
++        </Wrapper>
++    );
++}
+diff --git a/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/hasAgentConsumers.ts b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/hasAgentConsumers.ts
+new file mode 100644
+index 0000000000..45bf75366c
+--- /dev/null
++++ b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/hasAgentConsumers.ts
+@@ -0,0 +1,16 @@
++import { AGENT_CONSUMERS_TAG_URN } from '@app/entityV2/dataset/profile/AgentImpact/useAgentLensPayload';
++
++import { GetDatasetQuery } from '@graphql/dataset.generated';
++
++/**
++ * Whether `agentlens guard` has tagged this table as read by the agent fleet.
++ *
++ * The tag rides in on `globalTags`, which the dataset query already fetches, so
++ * gating the tab on it costs no extra request — and means the tab shows up on
++ * exactly the tables agents actually read rather than on all of them.
++ */
++export function hasAgentConsumers(dataset?: GetDatasetQuery): boolean {
++    return !!dataset?.dataset?.globalTags?.tags?.some(
++        (association) => association?.tag?.urn === AGENT_CONSUMERS_TAG_URN,
++    );
++}
+diff --git a/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/simulate.ts b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/simulate.ts
+new file mode 100644
+index 0000000000..19a8b5090e
+--- /dev/null
++++ b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/simulate.ts
+@@ -0,0 +1,129 @@
++import { AgentLensPayload, Change, Effect, Severity } from '@app/entityV2/dataset/profile/AgentImpact/types';
++
++/**
++ * Mirrors agentlens/sandbox.py :: simulate(). Keep the two in step.
++ *
++ * The point of running it here rather than calling the CLI is that the answer
++ * arrives as fast as you can click. The CLI stays authoritative — this is the
++ * same algorithm over the same data, but if the two ever disagree, the CLI is
++ * the one that gets committed to CI.
++ */
++
++const MAX_HOPS = 6;
++
++/**
++ * Word-boundary, case-insensitive: `discount_pct` matches `o.discount_pct` and
++ * `SUM(discount_pct)` but not `discount_pct_v2`.
++ */
++export function mentions(text: string, column: string): boolean {
++    if (!text || !column) return false;
++    const escaped = column.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++    return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
++}
++
++/** Everything downstream of `from`, mapped to the hop count it was reached at. */
++function reach(index: Record<string, string[]>, from: string): Map<string, number> {
++    const reached = new Map<string, number>();
++    let frontier = [from];
++    const seen = new Set(frontier);
++    for (let hop = 1; hop <= MAX_HOPS; hop++) {
++        const next: string[] = [];
++        frontier.forEach((urn) => {
++            (index[urn] || []).forEach((child) => {
++                if (!seen.has(child)) {
++                    seen.add(child);
++                    reached.set(child, hop);
++                    next.push(child);
++                }
++            });
++        });
++        frontier = next;
++        if (!frontier.length) break;
++    }
++    return reached;
++}
++
++const RANK: Record<Severity, number> = { breaks: 0, degrades: 1, unchanged: 2 };
++
++export function simulate(payload: AgentLensPayload, change: Change): Effect[] {
++    const reached = reach(payload.index, change.table);
++    const effects: Effect[] = [];
++    const broken = new Set<string>();
++
++    // Skills first: an agent's verdict depends on which of its skills broke.
++    reached.forEach((hops, urn) => {
++        const node = payload.meta[urn] || {};
++        if (node.kind !== 'skill') return;
++        const text = payload.skillText[node.id || ''] || '';
++        let severity: Severity;
++        let why: string;
++        if (change.kind === 'drop-column') {
++            const column = change.column || '';
++            if (!text) {
++                severity = 'breaks';
++                why = 'could not read the skill file - assuming affected';
++            } else if (mentions(text, column)) {
++                severity = 'breaks';
++                why = `names ${column} in its text`;
++            } else {
++                severity = 'unchanged';
++                why = `reads the table but never names ${column}`;
++            }
++        } else if (change.kind === 'rename-table') {
++            severity = 'breaks';
++            why = `names the old table; text must change to ${change.newName || 'the new name'}`;
++        } else {
++            severity = 'breaks';
++            why = 'the table it reads would not exist';
++        }
++        if (severity === 'breaks' && node.id) broken.add(node.id);
++        effects.push({
++            severity,
++            kind: 'skill',
++            name: node.name || node.id || urn,
++            id: node.id || urn,
++            hops,
++            why,
++            sourcePath: node.source_path || '',
++            ownerTeam: '',
++        });
++    });
++
++    reached.forEach((hops, urn) => {
++        const node = payload.meta[urn] || {};
++        if (node.kind !== 'agent') return;
++        const via = (payload.agentSkills[node.id || ''] || []).filter((s) => broken.has(s)).sort();
++        effects.push({
++            severity: via.length ? 'degrades' : 'unchanged',
++            kind: 'agent',
++            name: node.name || node.id || urn,
++            id: node.id || urn,
++            hops,
++            why: via.length ? `via ${via.join(', ')}` : 'none of its skills name the change',
++            sourcePath: node.source_path || '',
++            ownerTeam: node.owner_team || '',
++        });
++    });
++
++    effects.sort(
++        (a, b) => RANK[a.severity] - RANK[b.severity] || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
++    );
++    return effects;
++}
++
++/** `urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders,PROD)` -> `analytics.orders` */
++export function shortName(urn: string): string {
++    return urn && urn.includes(',') ? urn.split(',')[1] : urn;
++}
++
++/** The command that reproduces what the tab is showing. */
++export function cliCommand(change: Change): string {
++    const flag =
++        // eslint-disable-next-line no-nested-ternary
++        change.kind === 'drop-column'
++            ? `--drop-column ${change.column || '<column>'}`
++            : change.kind === 'rename-table'
++              ? `--rename-to ${change.newName || '<name>'}`
++              : '--drop-table';
++    return `agentlens sandbox ${shortName(change.table)} ${flag}`;
++}
+diff --git a/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/types.ts b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/types.ts
+new file mode 100644
+index 0000000000..5ea7e32929
+--- /dev/null
++++ b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/types.ts
+@@ -0,0 +1,65 @@
++/**
++ * The shape of `GET /agentlens/payload.json`, served by `agentlens serve`.
++ *
++ * Field names are snake_case where they come straight out of the Python model
++ * (`source_path`, `owner_team`) and camelCase where the payload builder names
++ * them itself. Mirrored from agentlens/explorer.py :: build_payload().
++ */
++
++export type Severity = 'breaks' | 'degrades' | 'unchanged';
++
++export type ChangeKind = 'drop-column' | 'rename-table' | 'drop-table';
++
++/** A node in the fleet graph. `kind` is 'agent', 'skill', 'tool' or 'table'. */
++export interface AgentLensNode {
++    kind?: string;
++    id?: string;
++    name?: string;
++    source_path?: string;
++    owner_team?: string;
++}
++
++export interface AgentLensTable {
++    /** The reference as written in the skill, before resolution. */
++    raw: string;
++    /** Skill ids that read this table. */
++    readers: string[];
++}
++
++export interface AgentLensPayload {
++    /** urn -> downstream urns. The lineage we emitted, as an adjacency list. */
++    index: Record<string, string[]>;
++    meta: Record<string, AgentLensNode>;
++    /** skill id -> the text of its SKILL.md. */
++    skillText: Record<string, string>;
++    /** agent id -> the skill ids it owns. */
++    agentSkills: Record<string, string[]>;
++    tables: Record<string, AgentLensTable>;
++    /** Column names seen across every skill, for the chips. */
++    columns: string[];
++    /** Table references we could not match to anything in the catalog. */
++    unresolved: string[];
++    counts: { agents: number; skills: number; tools: number };
++    repository?: string | null;
++}
++
++export interface Change {
++    table: string;
++    kind: ChangeKind;
++    column?: string;
++    newName?: string;
++}
++
++export interface Effect {
++    severity: Severity;
++    /** 'skill' or 'agent'. */
++    kind: string;
++    name: string;
++    id: string;
++    /** Hops downstream of the changed table. */
++    hops: number;
++    /** Why this verdict — shown verbatim, so it has to read as a sentence. */
++    why: string;
++    sourcePath: string;
++    ownerTeam: string;
++}
+diff --git a/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/useAgentLensPayload.ts b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/useAgentLensPayload.ts
+new file mode 100644
+index 0000000000..80afc0fa99
+--- /dev/null
++++ b/datahub-web-react/src/app/entityV2/dataset/profile/AgentImpact/useAgentLensPayload.ts
+@@ -0,0 +1,58 @@
++import { useEffect, useState } from 'react';
++
++import { AgentLensPayload } from '@app/entityV2/dataset/profile/AgentImpact/types';
++
++/**
++ * The tag `agentlens guard` writes onto tables the fleet reads. It is what
++ * makes the Agents tab appear on exactly those tables and nowhere else.
++ */
++export const AGENT_CONSUMERS_TAG_URN = 'urn:li:tag:has-agent-consumers';
++
++/**
++ * Same-origin in dev via the vite proxy, and in a real deployment via whatever
++ * fronts the app. `agentlens serve` is the thing on the other end.
++ */
++export const PAYLOAD_URL = '/agentlens/payload.json';
++
++export interface PayloadState {
++    payload?: AgentLensPayload;
++    loading: boolean;
++    /** Set when we could not load — rendered as guidance, not a stack trace. */
++    error?: string;
++}
++
++export function useAgentLensPayload(): PayloadState {
++    const [state, setState] = useState<PayloadState>({ loading: true });
++
++    useEffect(() => {
++        let live = true;
++        const controller = new AbortController();
++
++        fetch(PAYLOAD_URL, { signal: controller.signal })
++            .then(async (response) => {
++                if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
++                return response.json();
++            })
++            .then((payload: AgentLensPayload) => {
++                if (!live) return;
++                // A payload without an index would silently simulate to "nothing
++                // downstream", which reads as "safe to change". Refuse instead.
++                if (!payload?.index || !payload?.meta) {
++                    setState({ loading: false, error: 'The payload is missing its fleet graph.' });
++                    return;
++                }
++                setState({ loading: false, payload });
++            })
++            .catch((err: Error) => {
++                if (!live || err.name === 'AbortError') return;
++                setState({ loading: false, error: err.message });
++            });
++
++        return () => {
++            live = false;
++            controller.abort();
++        };
++    }, []);
++
++    return state;
++}
+diff --git a/datahub-web-react/vite.config.ts b/datahub-web-react/vite.config.ts
+index 4d598aa30d..7b62b00a5f 100644
+--- a/datahub-web-react/vite.config.ts
++++ b/datahub-web-react/vite.config.ts
+@@ -48,9 +48,7 @@ function assertLazyIconsGenerated(): PluginOption {
+         name: 'assert-lazy-icons-generated',
+         buildStart() {
+             const iconsDir = path.resolve(__dirname, 'src/app/mfeframework/lazy-icons');
+-            const hasStubs =
+-                fs.existsSync(iconsDir) &&
+-                fs.readdirSync(iconsDir).some((f) => f.endsWith('.ts'));
++            const hasStubs = fs.existsSync(iconsDir) && fs.readdirSync(iconsDir).some((f) => f.endsWith('.ts'));
+             if (!hasStubs) {
+                 throw new Error(
+                     '\n\n  [Lazy Icons] Icon stubs are missing. Generate them before starting:\n\n' +
+@@ -116,7 +114,18 @@ export default defineConfig(async ({ mode }) => {
+         configure: proxyDebugConfig,
+     };
+ 
++    // AgentLens: `agentlens serve` runs alongside the stack and exposes
++    // /payload.json. Proxying it keeps the Agents tab's fetch same-origin, the
++    // same way the frontend proxy above does for GraphQL.
++    const agentlensProxy = {
++        target: process.env.REACT_APP_AGENTLENS_TARGET || 'http://localhost:8000',
++        changeOrigin: true,
++        rewrite: (p: string) => p.replace(/^\/agentlens/, ''),
++        configure: proxyDebugConfig,
++    };
++
+     const proxyOptions = {
++        '/agentlens': agentlensProxy,
+         '/logIn': frontendProxy,
+         '/authenticate': frontendProxy,
+         '/api/v2/graphql': frontendProxy,
+-- 
+2.50.1 (Apple Git-155)
+

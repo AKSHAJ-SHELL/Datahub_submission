@@ -19,7 +19,6 @@ table already had.
 
 from __future__ import annotations
 
-import json
 import os
 import time
 
@@ -61,7 +60,7 @@ class Actions:
             for mcp in builder.build():
                 self.rest.emit_mcp(mcp)
             return True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - SDK raises undocumented types; a partial write-back must still report
             self.log.append(f"    patch failed for {dataset_urn}: {exc}")
             return False
 
@@ -122,7 +121,7 @@ class Actions:
                         ),
                     )
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - SDK raises undocumented types; a partial write-back must still report
                 self.log.append(f"    memory failed for {item['name']}: {exc}")
 
             if deprecate:
@@ -137,7 +136,7 @@ class Actions:
                             ),
                         )
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - SDK raises undocumented types; a partial write-back must still report
                     self.log.append(f"    deprecate failed for {item['name']}: {exc}")
 
         verb = "deprecated" if deprecate else "tagged"
@@ -188,7 +187,7 @@ class Actions:
                 self.log.append(f"  filed GitHub issue: {url}")
                 return url
             self.log.append(f"  GitHub issue failed: {resp.status_code} {resp.text[:160]}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - SDK raises undocumented types; a partial write-back must still report
             self.log.append(f"  GitHub issue failed: {exc}")
         return None
 
